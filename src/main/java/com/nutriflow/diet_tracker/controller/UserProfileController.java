@@ -17,14 +17,21 @@ public class UserProfileController {
     @Autowired
     private UserRepository userRepository;
 
+    // D://new eram project//diet-tracker//diet-tracker//src//main//java//com//nutriflow//diet_tracker//controller//UserProfileController.java
+
     @PostMapping("/sync")
-
     public User syncProfile(@AuthenticationPrincipal Jwt jwt, @RequestBody User profileData) {
-
         String clerkId = jwt.getSubject();
-        User user = userRepository.findByClerkId(clerkId).orElse(new User());
+        String emailFromJwt = jwt.getClaimAsString("email");
+
+        User user = userRepository.findByClerkId(clerkId).orElseGet(() -> {
+            User newUser = new User();
+            newUser.setRole("ROLE_USER");
+            return newUser;
+        });
 
         user.setClerkId(clerkId);
+        user.setEmail(emailFromJwt); // This saves your real email
         user.setAge(profileData.getAge());
         user.setGender(profileData.getGender());
         user.setWeight(profileData.getWeight());

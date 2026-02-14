@@ -11,6 +11,7 @@ import java.util.List;
 
 @Repository
 public interface FoodLogRepository extends JpaRepository<FoodLog,Long> {
-
+    // Inside FoodLogRepository interface
+    long countByCreatedAtAfter(LocalDateTime date);
     List<FoodLog> findByCreatedAtBetweenAndUser(LocalDateTime createdAtAfter, LocalDateTime createdAtBefore, User user);
 }

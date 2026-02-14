@@ -1,29 +1,3 @@
-//package com.nutriflow.diet_tracker.config;
-//
-//import org.springframework.context.annotation.Bean;
-//import org.springframework.context.annotation.Configuration;
-//import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-//import org.springframework.security.web.SecurityFilterChain;
-//
-//@Configuration
-//public class SecurityConfig {
-//
-//    @Bean
-//    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-//        http
-//                .csrf(csrf -> csrf.disable()) // Stateless APIs don't need CSRF
-//                .authorizeHttpRequests(auth -> auth
-//                        .requestMatchers("/api/public/**").permitAll() // Public routes
-//                        .requestMatchers("/api/admin/**").hasRole("ADMIN") // Role-based access
-//                        .requestMatchers("/api/user/check-engine").permitAll()
-//                        .anyRequest().authenticated()
-//                )
-//                .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> {})); // Use JWT validation
-//
-//        return http.build();
-//    }
-//}
-
 package com.nutriflow.diet_tracker.config;
 
 import org.springframework.context.annotation.Bean;
@@ -43,20 +17,25 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-                .cors(Customizer.withDefaults()) // 1. THIS IS THE MAGIC LINE! It enables CORS in Spring Security
+                .cors(Customizer.withDefaults())
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
-                        .anyRequest().permitAll() // 2. Still allowing all requests for testing
-                );
+                        // NOTE: Ensure your User entity getAuthorities() returns "ROLE_ADMIN"
+                        // OR if you are not using UserDetails, Spring Security usually expects ROLE_ prefix automatically with hasRole
+                        .requestMatchers("/api/admin/**").hasAuthority("ROLE_ADMIN")
+                        .requestMatchers("/api/public/**").permitAll()
+                        .requestMatchers("/api/user/check-engine").permitAll()
+                        .anyRequest().authenticated()
+                )
+                .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults()));
 
         return http.build();
     }
 
-    // 3. This tells the security guard exactly who is allowed in
     @Bean
     CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:5173")); // Your React App
+        configuration.setAllowedOrigins(List.of("http://localhost:5173"));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);

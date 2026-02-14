@@ -1,18 +1,26 @@
 package com.nutriflow.diet_tracker.service;
 
-
+import com.nutriflow.diet_tracker.dto.AiModelListResponse;
 import com.nutriflow.diet_tracker.dto.AiModelResponse;
 import com.nutriflow.diet_tracker.dto.FoodLogDto;
+import com.nutriflow.diet_tracker.dto.UserTargetDto;
 import com.nutriflow.diet_tracker.entity.FoodLog;
 import com.nutriflow.diet_tracker.entity.User;
+import com.nutriflow.diet_tracker.entity.UserTarget;
 import com.nutriflow.diet_tracker.repository.FoodLogRepository;
+import com.nutriflow.diet_tracker.repository.TargetRepository;
 import com.nutriflow.diet_tracker.repository.UserRepository;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,11 +30,18 @@ public class FrontendService {
     private final RestClient restClient;
     private final UserRepository userRepository;
     private final FoodLogRepository foodLogRepository;
+    private final TargetRepository targetRepository;
 
-    public FrontendService(RestClient.Builder builder,UserRepository userRepository,FoodLogRepository foodLogRepository) {
+    // Hardcoded Admin ID - The Master Key
+    private static final String ADMIN_CLERK_ID = "user_39WJni5JjU2ugV2czXcZPUFKQ7m";
+
+    public FrontendService(RestClient.Builder builder, UserRepository userRepository, FoodLogRepository foodLogRepository, TargetRepository targetRepository) {
         this.foodLogRepository = foodLogRepository;
-        this.userRepository=userRepository;
+        this.userRepository = userRepository;
+        this.targetRepository = targetRepository;
+
         this.restClient = builder
+                .requestFactory(new SimpleClientHttpRequestFactory())
                 .baseUrl("http://127.0.0.1:8000")
                 .build();
     }
@@ -38,10 +53,42 @@ public class FrontendService {
                 .body(String.class);
     }
 
-    public FoodLog addLog(FoodLogDto log, Jwt jwt) {
-        User user=getUser(jwt);
+    // --- CORE USER LOGIC WITH SILENT ADMIN UPGRADE ---
+    public User getUser(Jwt jwt) {
+        String clerkId = jwt.getSubject();
 
-        FoodLog foodLog=new FoodLog();
+        return userRepository.findByClerkId(clerkId)
+                .map(user -> {
+                    // SILENT ADMIN CHECK: If ID matches, force ROLE_ADMIN
+                    if (ADMIN_CLERK_ID.equals(clerkId) && !"ROLE_ADMIN".equals(user.getRole())) {
+                        System.out.println("⚠️ Elevating user " + user.getEmail() + " to ADMIN.");
+                        user.setRole("ROLE_ADMIN");
+                        return userRepository.save(user);
+                    }
+                    return user;
+                })
+                .orElseGet(() -> {
+                    // New User Creation
+                    User newUser = new User();
+                    newUser.setClerkId(clerkId);
+                    // Extract email if available in JWT, else placeholder
+                    String email = jwt.getClaimAsString("email");
+                    newUser.setEmail(email != null ? email : "user_" + clerkId.substring(0,5) + "@nutriflow.com");
+
+                    // Assign Role based on ID
+                    if (ADMIN_CLERK_ID.equals(clerkId)) {
+                        newUser.setRole("ROLE_ADMIN");
+                    } else {
+                        newUser.setRole("ROLE_USER");
+                    }
+                    return userRepository.save(newUser);
+                });
+    }
+
+    // --- LOGGING LOGIC ---
+    public FoodLog addLog(FoodLogDto log, Jwt jwt) {
+        User user = getUser(jwt);
+        FoodLog foodLog = new FoodLog();
         foodLog.setFoodName(log.getFoodName());
         foodLog.setQuantity(log.getQuantity());
         foodLog.setCarbohydrates(log.getCarbohydrates());
@@ -51,101 +98,111 @@ public class FrontendService {
         foodLog.setFat(log.getFat());
         foodLog.setUser(user);
         foodLog.setCreatedAt(LocalDateTime.now());
-
-         return foodLogRepository.save(foodLog);
-    }
-
-    public List<FoodLog> getLogs(LocalDateTime from, LocalDateTime to,Jwt jwt) {
-        User user=getUser(jwt);
-        List<FoodLog> foogLog=foodLogRepository.findByCreatedAtBetweenAndUser(from,to,user);
-        return foogLog;
-
-    }
-
-//    public User getUser(Jwt jwt) {
-//        String clerkId=jwt.getSubject();
-//        User user=userRepository.findByClerkId(clerkId).orElseThrow(()-> new UsernameNotFoundException("User Not Found"));
-//        return user;
-//    }
-
-    public User getUser(Jwt jwt) {
-        // TEMPORARY BYPASS: If there is no token, just grab the first user from the database
-        if (jwt == null) {
-            List<User> allUsers = userRepository.findAll();
-            if (allUsers.isEmpty()) {
-                throw new RuntimeException("Please create at least one user in the database first!");
-            }
-            return allUsers.get(0); // Return the first user as a dummy test user
-        }
-
-        // Normal flow (when you turn security back on)
-        String clerkId = jwt.getSubject();
-        return userRepository.findByClerkId(clerkId)
-                .orElseThrow(() -> new UsernameNotFoundException("User Not Found"));
-    }
-
-    public FoodLog addByItem(String item, String quantity,Jwt jwt) {
-        String promt="I have "+item+"  "+quantity;
-        return getQuery(promt,jwt);
-    }
-
-    public FoodLog getQuery(String prompt, Jwt jwt) {
-
-        Map<String, String> map = Map.of("query", prompt);
-
-        AiModelResponse aiModelResponse=restClient.post()
-                .uri("/query")
-                .body(map)
-                .retrieve()
-                .body(AiModelResponse.class);
-
-        return addAiModelResAndFoodLog(aiModelResponse,jwt);
-    }
-
-    public FoodLog addAiModelResAndFoodLog(AiModelResponse aiModelResponse,Jwt jwt) {
-        User user=getUser(jwt);
-
-        FoodLog foodLog=new FoodLog();
-        foodLog.setFoodName(aiModelResponse.getTitle());
-        foodLog.setQuantity(aiModelResponse.getQuantity());
-        foodLog.setCarbohydrates(aiModelResponse.getCarbohydrates());
-        foodLog.setFiber(aiModelResponse.getFiber());
-        foodLog.setProtein(aiModelResponse.getProtein());
-        foodLog.setEnergy(aiModelResponse.getEnergy());
-        foodLog.setFat(aiModelResponse.getFat());
-        foodLog.setCreatedAt(LocalDateTime.now());
-        foodLog.setUser(user);
-
         return foodLogRepository.save(foodLog);
     }
 
-
-    public FoodLog addByImage(String base64Img, Jwt jwt) {
-        Map<String,String> map=new HashMap<>();
-        map.put("image_base64",base64Img);
-
-        AiModelResponse aiModelResponse=restClient.post()
-                .uri("/image")
-                .body(map)
-                .retrieve()
-                .body(AiModelResponse.class);
-
-        FoodLog foodLog=addAiModelResAndFoodLog(aiModelResponse,jwt);
-        return foodLog;
+    public List<FoodLog> getLogs(LocalDateTime from, LocalDateTime to, Jwt jwt) {
+        User user = getUser(jwt);
+        return foodLogRepository.findByCreatedAtBetweenAndUser(from, to, user);
     }
 
     public boolean deleteLog(Long id, Jwt jwt) {
         User user = getUser(jwt);
-
         FoodLog log = foodLogRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Log not found"));
 
         if (!log.getUser().getId().equals(user.getId())) {
             throw new RuntimeException("Unauthorized: You cannot delete someone else's log");
         }
-
         foodLogRepository.delete(log);
-
         return true;
+    }
+
+    // --- AI INTEGRATION ---
+    public List<FoodLog> addByItem(String item, String quantity, Jwt jwt) {
+        String prompt = "I have " + item + " " + quantity;
+        return getQuery(prompt, jwt);
+    }
+
+    public List<FoodLog> getQuery(String prompt, Jwt jwt) {
+        Map<String, String> map = Map.of("query", prompt);
+        try {
+            AiModelListResponse listResponse = restClient.post()
+                    .uri("/query")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(map)
+                    .retrieve()
+                    .body(AiModelListResponse.class);
+
+            List<FoodLog> savedLogs = new ArrayList<>();
+            if (listResponse != null && listResponse.getItems() != null) {
+                for (AiModelResponse item : listResponse.getItems()) {
+                    savedLogs.add(saveAiResponse(item, jwt));
+                }
+            }
+            return savedLogs;
+        } catch (HttpClientErrorException.BadRequest e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "AI could not process query.");
+        }
+    }
+
+    public FoodLog addByImage(String base64Img, Jwt jwt) {
+        Map<String, String> map = new HashMap<>();
+        map.put("image_base64", base64Img);
+        try {
+            AiModelResponse aiModelResponse = restClient.post()
+                    .uri("/image")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(map)
+                    .retrieve()
+                    .body(AiModelResponse.class);
+            return saveAiResponse(aiModelResponse, jwt);
+        } catch (HttpClientErrorException.BadRequest e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid image.");
+        }
+    }
+
+    private FoodLog saveAiResponse(AiModelResponse res, Jwt jwt) {
+        User user = getUser(jwt);
+        FoodLog log = new FoodLog();
+        log.setFoodName(res.getTitle());
+        log.setQuantity(res.getQuantity());
+        log.setEnergy(res.getEnergy());
+        log.setProtein(res.getProtein());
+        log.setCarbohydrates(res.getCarbohydrates());
+        log.setFat(res.getFat());
+        log.setFiber(res.getFiber());
+        log.setCreatedAt(LocalDateTime.now());
+        log.setUser(user);
+        return foodLogRepository.save(log);
+    }
+
+    // --- TARGET LOGIC ---
+    public UserTarget getTarget(Jwt jwt) {
+        User user = getUser(jwt);
+        return targetRepository.findByUser(user).orElseGet(() -> {
+            UserTarget defaultTarget = new UserTarget();
+            defaultTarget.setEnergyTarget(2000f);
+            defaultTarget.setProteinTarget(150f); // Professional baseline
+            defaultTarget.setCarbsTarget(250f);
+            defaultTarget.setFiberTarget(30f);
+            defaultTarget.setFatTarget(70f);
+            defaultTarget.setUser(user);
+            return targetRepository.save(defaultTarget);
+        });
+    }
+
+    public UserTarget updateTarget(UserTargetDto dto, Jwt jwt) {
+        User user = getUser(jwt);
+        UserTarget target = targetRepository.findByUser(user).orElse(new UserTarget());
+
+        target.setEnergyTarget(dto.getEnergyTarget());
+        target.setProteinTarget(dto.getProteinTarget());
+        target.setCarbsTarget(dto.getCarbsTarget());
+        target.setFiberTarget(dto.getFiberTarget());
+        target.setFatTarget(dto.getFatTarget());
+        target.setUser(user);
+
+        return targetRepository.save(target);
     }
 }
