@@ -1,5 +1,6 @@
 package com.nutriflow.diet_tracker.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
@@ -14,6 +15,12 @@ import java.util.List;
 @Configuration
 public class SecurityConfig {
 
+    // --- FIX STARTS HERE ---
+    // We must inject the variable from application.properties
+    @Value("${app.frontend.url}")
+    private String frontendUrl;
+    // --- FIX ENDS HERE ---
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
@@ -21,7 +28,6 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
                         // NOTE: Ensure your User entity getAuthorities() returns "ROLE_ADMIN"
-                        // OR if you are not using UserDetails, Spring Security usually expects ROLE_ prefix automatically with hasRole
                         .requestMatchers("/api/admin/**").hasAuthority("ROLE_ADMIN")
                         .requestMatchers("/api/public/**").permitAll()
                         .requestMatchers("/api/user/check-engine").permitAll()
@@ -35,7 +41,10 @@ public class SecurityConfig {
     @Bean
     CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:5173"));
+
+        // Now 'frontendUrl' is valid because we declared it above
+        configuration.setAllowedOrigins(List.of(frontendUrl));
+
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);

@@ -10,6 +10,7 @@ import com.nutriflow.diet_tracker.entity.UserTarget;
 import com.nutriflow.diet_tracker.repository.FoodLogRepository;
 import com.nutriflow.diet_tracker.repository.TargetRepository;
 import com.nutriflow.diet_tracker.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -35,14 +36,20 @@ public class FrontendService {
     // Hardcoded Admin ID - The Master Key
     private static final String ADMIN_CLERK_ID = "user_39WJni5JjU2ugV2czXcZPUFKQ7m";
 
-    public FrontendService(RestClient.Builder builder, UserRepository userRepository, FoodLogRepository foodLogRepository, TargetRepository targetRepository) {
+    // UPDATED CONSTRUCTOR
+    public FrontendService(RestClient.Builder builder,
+                           UserRepository userRepository,
+                           FoodLogRepository foodLogRepository,
+                           TargetRepository targetRepository,
+                           @Value("${ai.service.url}") String aiServiceUrl) { // INJECTED HERE
+
         this.foodLogRepository = foodLogRepository;
         this.userRepository = userRepository;
         this.targetRepository = targetRepository;
 
         this.restClient = builder
                 .requestFactory(new SimpleClientHttpRequestFactory())
-                .baseUrl("http://127.0.0.1:8000")
+                .baseUrl(aiServiceUrl) // USED HERE
                 .build();
     }
 
@@ -59,7 +66,6 @@ public class FrontendService {
 
         return userRepository.findByClerkId(clerkId)
                 .map(user -> {
-                    // SILENT ADMIN CHECK: If ID matches, force ROLE_ADMIN
                     if (ADMIN_CLERK_ID.equals(clerkId) && !"ROLE_ADMIN".equals(user.getRole())) {
                         System.out.println("⚠️ Elevating user " + user.getEmail() + " to ADMIN.");
                         user.setRole("ROLE_ADMIN");
@@ -68,14 +74,11 @@ public class FrontendService {
                     return user;
                 })
                 .orElseGet(() -> {
-                    // New User Creation
                     User newUser = new User();
                     newUser.setClerkId(clerkId);
-                    // Extract email if available in JWT, else placeholder
                     String email = jwt.getClaimAsString("email");
                     newUser.setEmail(email != null ? email : "user_" + clerkId.substring(0,5) + "@nutriflow.com");
 
-                    // Assign Role based on ID
                     if (ADMIN_CLERK_ID.equals(clerkId)) {
                         newUser.setRole("ROLE_ADMIN");
                     } else {
@@ -84,6 +87,8 @@ public class FrontendService {
                     return userRepository.save(newUser);
                 });
     }
+
+    // ... (Rest of your methods remain exactly the same) ...
 
     // --- LOGGING LOGIC ---
     public FoodLog addLog(FoodLogDto log, Jwt jwt) {
@@ -183,7 +188,7 @@ public class FrontendService {
         return targetRepository.findByUser(user).orElseGet(() -> {
             UserTarget defaultTarget = new UserTarget();
             defaultTarget.setEnergyTarget(2000f);
-            defaultTarget.setProteinTarget(150f); // Professional baseline
+            defaultTarget.setProteinTarget(150f);
             defaultTarget.setCarbsTarget(250f);
             defaultTarget.setFiberTarget(30f);
             defaultTarget.setFatTarget(70f);
@@ -195,14 +200,12 @@ public class FrontendService {
     public UserTarget updateTarget(UserTargetDto dto, Jwt jwt) {
         User user = getUser(jwt);
         UserTarget target = targetRepository.findByUser(user).orElse(new UserTarget());
-
         target.setEnergyTarget(dto.getEnergyTarget());
         target.setProteinTarget(dto.getProteinTarget());
         target.setCarbsTarget(dto.getCarbsTarget());
         target.setFiberTarget(dto.getFiberTarget());
         target.setFatTarget(dto.getFatTarget());
         target.setUser(user);
-
         return targetRepository.save(target);
     }
 }
